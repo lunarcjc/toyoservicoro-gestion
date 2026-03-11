@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TOYOSERVICORO | Gestión Cloud v2.3</title>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, doc, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAengqkziKPMEBeEkfqmocw8rR7dgd_92I",
+            authDomain: "toyoservicioscoro.firebaseapp.com",
+            projectId: "toyoservicioscoro",
+            storageBucket: "toyoservicioscoro.firebasestorage.app",
+            messagingSenderId: "8828448642",
+            appId: "1:8828448642:web:e64a54e4ef436febf1e99b",
+            measurementId: "G-XRCB8J3W3J"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        window.db = db;
+        window.collection = collection;
+        window.addDoc = addDoc;
+        window.getDocs = getDocs;
+        window.query = query;
+        window.orderBy = orderBy;
+        window.limit = limit;
+        window.doc = doc;
+        window.deleteDoc = deleteDoc;
+        window.updateDoc = updateDoc;
+    </script>
+
+    <style>
+        :root { --toyota-red: #eb0a1e; --dark: #1a1a1a; --gray: #f4f4f4; --gold: #b8860b; }
+        body { font-family: 'Segoe UI', sans-serif; background: #cfd8dc; margin: 0; padding: 20px; }
+        .main-wrapper { max-width: 1600px; margin: auto; display: grid; grid-template-columns: 480px 1fr; gap: 20px; }
+        .card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 8px 20px rgba(0,0,0,0.15); margin-bottom: 20px; position: relative; }
+        .card::before { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 5px; background: var(--toyota-red); border-radius: 15px 15px 0 0; }
+        .header { background: var(--dark); color: white; padding: 20px; border-radius: 15px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 4px solid var(--toyota-red); }
+        h3 { color: var(--toyota-red); text-transform: uppercase; font-size: 0.9em; margin: 15px 0 5px 0; border-bottom: 1px solid #eee; }
+        input, select, textarea { width: 100%; padding: 12px; margin-top: 8px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-family: inherit; }
+        .btn { width: 100%; padding: 15px; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; margin-top: 10px; text-transform: uppercase; }
+        .btn-red { background: var(--toyota-red); color: white; }
+        .btn-gold { background: var(--gold); color: white; }
+        .btn-dark { background: #444; color: white; }
+        .tabla-items { width: 100%; margin-top: 10px; border-collapse: collapse; }
+        .tabla-items td { padding: 8px; border-bottom: 1px solid #eee; font-size: 0.85em; }
+        .search-results { max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid #ddd; border-radius: 8px; }
+        .result-item { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .repuesto-row { display: grid; grid-template-columns: 1fr 60px 80px 40px; gap: 5px; align-items: end; }
+        @media print { .no-print { display: none !important; } .main-wrapper { display: block; } .card { box-shadow: none; border: 1px solid #eee; } }
+    </style>
+</head>
+<body onload="setInterval(() => document.getElementById('reloj').innerText = new Date().toLocaleString(), 1000);">
+
+<div class="header no-print">
+    <div><h1 style="margin:0;">TOYOSERVICORO</h1><small>Gestión Profesional Toyota | v2.3</small></div>
+    <div id="reloj" style="font-family: monospace; font-size: 1.1em;"></div>
+</div>
+
+<div class="main-wrapper">
+    <div class="sidebar no-print">
+        <div class="card">
+            <h3>🔍 BUSCAR HISTORIAL</h3>
+            <input type="text" id="inputBusqueda" onkeyup="buscar()" placeholder="Placa o Nombre...">
+            <div id="resBusqueda" class="search-results"></div>
+        </div>
+
+        <div class="card">
+            <h3>DATOS DEL VEHÍCULO</h3>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <input type="text" id="v_placa" placeholder="PLACA" style="text-transform:uppercase; font-weight:bold;">
+                <input type="text" id="v_cedula" placeholder="CÉDULA / RIF">
+            </div>
+            <input type="text" id="v_nombre" placeholder="NOMBRE DEL CLIENTE">
+            <input type="text" id="v_modelo" placeholder="MODELO">
+            
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <input type="number" id="v_km" oninput="document.getElementById('v_prox_km').value = (parseInt(this.value || 0)+5000) + ' KM'" placeholder="KM ACTUAL">
+                <input type="text" id="v_prox_km" placeholder="KM PRÓX. SERVICIO" style="color: red; font-weight: bold;">
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div><small>Fecha Entrada:</small><input type="datetime-local" id="v_entrada"></div>
+                <div><small>Fecha Próx. Servicio:</small><input type="date" id="v_prox_fecha"></div>
+            </div>
+
+            <h3 style="color: var(--dark); border-bottom: 1px solid #ccc;">📋 ORDEN DE INGRESO</h3>
+            <textarea id="v_falla" rows="2" placeholder="Motivo de ingreso / Falla reportada..."></textarea>
+            
+            <h3 style="color: var(--dark); border-bottom: 1px solid #ccc;">🛠️ DIAGNÓSTICO TÉCNICO</h3>
+            <textarea id="v_diag" rows="2" placeholder="Resultados de la inspección técnica..."></textarea>
+
+            <h3 style="color: var(--dark); border-bottom: 1px solid #ccc;">✅ TRABAJO REALIZADO</h3>
+            <textarea id="v_trabajo" rows="2" placeholder="Descripción de la solución aplicada..."></textarea>
+
+            <h3>SERVICIOS (MANO DE OBRA)</h3>
+            <label><small>Mano de Obra Profesional ($):</small></label>
+            <input type="number" id="v_mo" placeholder="Monto total MO" oninput="actualizarTotal()">
+            
+            <select id="m_serv" onchange="agregarServicio()">
+                <option value="">-- SELECCIONAR SERVICIO --</option>
+                <option value="Mantenimiento Preventivo">Mantenimiento Preventivo</option>
+                <option value="Cambio de Aceite y Filtro">Cambio de Aceite y Filtro</option>
+                <option value="Cambio de Filtro de Aire">Cambio de Filtro de Aire</option>
+                <option value="Cambio de Filtro de A/A">Cambio de Filtro de A/A</option>
+                <option value="Scanner / Diagnóstico Computarizado">Scanner / Diagnóstico Computarizado</option>
+                <option value="Limpieza y Calibración de Inyectores">Limpieza y Calibración de Inyectores</option>
+                <option value="Revisión y Ajuste de Frenos">Revisión y Ajuste de Frenos</option>
+                <option value="Reemplazo de Pastillas de Frenos">Reemplazo de Pastillas de Frenos</option>
+                <option value="Rectificación de Discos / Tambores">Rectificación de Discos / Tambores</option>
+                <option value="Mantenimiento de Tren Delantero">Mantenimiento de Tren Delantero</option>
+                <option value="Cambio de Amortiguadores">Cambio de Amortiguadores</option>
+                <option value="Alineación y Balanceo">Alineación y Balanceo</option>
+                <option value="Mantenimiento de Sistema de Enfriamiento">Mantenimiento de Sistema de Enfriamiento</option>
+                <option value="Recarga / Reparación de Aire Acondicionado">Recarga / Reparación de Aire Acondicionado</option>
+                <option value="Cambio de Bujías">Cambio de Bujías</option>
+                <option value="Mantenimiento de Transmisión">Mantenimiento de Transmisión</option>
+                <option value="Reemplazo de Correa de Tiempos">Reemplazo de Correa de Tiempos</option>
+                <option value="Reemplazo de Correa de Accesorios">Reemplazo de Correa de Accesorios</option>
+                <option value="Lavado de Motor y Chasis">Lavado de Motor y Chasis</option>
+                <option value="Pulitura de Faros">Pulitura de Faros</option>
+            </select>
+            <table class="tabla-items"><tbody id="t_body_servicios"></tbody></table>
+
+            <h3>REPUESTOS Y MATERIALES</h3>
+            <div class="repuesto-row">
+                <div><small>Repuesto:</small><input type="text" id="rep_nombre" placeholder="Nombre"></div>
+                <div><small>Cant.:</small><input type="number" id="rep_cant" value="1" min="1"></div>
+                <div><small>Costo u.:</small><input type="number" id="rep_costo" placeholder="0.00"></div>
+                <button class="btn btn-dark" style="padding: 10px; margin: 0;" onclick="agregarRepuesto()">+</button>
+            </div>
+            <table class="tabla-items"><tbody id="t_body_repuestos"></tbody></table>
+
+            <h2 style="text-align:right; color:var(--toyota-red);">TOTAL: <span id="t_total">$0.00</span></h2>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <button class="btn btn-gold" onclick="guardar('COTIZACION')">Cotización</button>
+                <button class="btn btn-red" onclick="guardar('ORDEN')">Guardar Orden</button>
+            </div>
+            <button class="btn btn-dark" onclick="location.reload()">Nuevo Registro</button>
+        </div>
+    </div>
+
+    <div class="card" id="visor">
+        <div style="text-align:center; padding-top:200px; color:#ccc;"><h2>VISTA PREVIA DE DOCUMENTO</h2></div>
+    </div>
+</div>
+
+<script>
+    let serviciosAgregados = [];
+    let repuestosAgregados = [];
+
+    window.agregarServicio = function() {
+        const s = document.getElementById('m_serv');
+        if(!s.value) return;
+        const nombreServicio = s.value;
+        const monto = prompt(`Ingrese costo para: ${nombreServicio}`, "0");
+        if (monto !== null) {
+            serviciosAgregados.push({ id: Date.now(), nombre: nombreServicio, precio: parseFloat(monto) || 0 });
+        }
+        s.value = "";
+        render();
+    };
+
+    window.agregarRepuesto = function() {
+        const nom = document.getElementById('rep_nombre').value;
+        const cant = parseFloat(document.getElementById('rep_cant').value) || 1;
+        const cos = parseFloat(document.getElementById('rep_costo').value) || 0;
+        if(!nom || cos <= 0) return alert("Ingrese nombre y costo válido");
+        const subtotalRepuesto = cant * cos;
+        repuestosAgregados.push({ id: Date.now(), nombre: nom, cantidad: cant, precioUnitario: cos, precio: subtotalRepuesto });
+        document.getElementById('rep_nombre').value = "";
+        document.getElementById('rep_cant').value = "1";
+        document.getElementById('rep_costo').value = "";
+        render();
+    };
+
+    function render() {
+        document.getElementById('t_body_servicios').innerHTML = serviciosAgregados.map(i => `
+            <tr><td>${i.nombre}</td><td align="right"><b>$${i.precio.toFixed(2)}</b></td>
+            <td width="20" style="color:red; cursor:pointer;" onclick="quitarServicio(${i.id})">×</td></tr>`).join('');
+        
+        document.getElementById('t_body_repuestos').innerHTML = repuestosAgregados.map(i => `
+            <tr><td style="color:#2c3e50;">[REP] ${i.nombre} (x${i.cantidad})</td><td align="right"><b>$${i.precio.toFixed(2)}</b></td>
+            <td width="20" style="color:red; cursor:pointer;" onclick="quitarRepuesto(${i.id})">×</td></tr>`).join('');
+        actualizarTotal();
+    }
+
+    window.quitarServicio = (id) => { serviciosAgregados = serviciosAgregados.filter(i => i.id !== id); render(); };
+    window.quitarRepuesto = (id) => { repuestosAgregados = repuestosAgregados.filter(i => i.id !== id); render(); };
+
+    window.actualizarTotal = () => {
+        const mo = parseFloat(document.getElementById('v_mo').value || 0);
+        const subS = serviciosAgregados.reduce((a, b) => a + b.precio, 0);
+        const subR = repuestosAgregados.reduce((a, b) => a + b.precio, 0);
+        const total = mo + subS + subR;
+        document.getElementById('t_total').innerText = `$${total.toFixed(2)}`;
+        return total;
+    };
+
+    window.guardar = async function(tipo) {
+        const placa = document.getElementById('v_placa').value.toUpperCase();
+        if(!placa) return alert("Ingrese Placa");
+        const data = {
+            tipo, placa,
+            cedula: document.getElementById('v_cedula').value,
+            nombre: document.getElementById('v_nombre').value,
+            modelo: document.getElementById('v_modelo').value,
+            km: document.getElementById('v_km').value,
+            prox_km: document.getElementById('v_prox_km').value,
+            prox_fecha: document.getElementById('v_prox_fecha').value,
+            entrada: document.getElementById('v_entrada').value,
+            falla: document.getElementById('v_falla').value,
+            diagnostico: document.getElementById('v_diag').value,
+            trabajo: document.getElementById('v_trabajo').value,
+            manoObra: parseFloat(document.getElementById('v_mo').value || 0),
+            servicios: serviciosAgregados,
+            repuestos: repuestosAgregados,
+            total: window.actualizarTotal(),
+            fecha: new Date().toLocaleDateString(),
+            timestamp: new Date()
+        };
+        try {
+            await window.addDoc(window.collection(window.db, "ordenes"), data);
+            alert("✅ Registro guardado exitosamente");
+            ver(data);
+        } catch(e) { alert("Error de conexión con Firebase."); }
+    };
+
+    window.buscar = async function() {
+        const q = document.getElementById('inputBusqueda').value.toLowerCase();
+        const res = document.getElementById('resBusqueda');
+        if(q.length < 2) { res.innerHTML = ""; return; }
+        const snap = await window.getDocs(window.query(window.collection(window.db, "ordenes"), window.orderBy("timestamp", "desc"), window.limit(20)));
+        res.innerHTML = "";
+        snap.forEach(docSnap => {
+            const d = docSnap.data();
+            if(d.placa.toLowerCase().includes(q) || d.nombre.toLowerCase().includes(q)) {
+                const item = document.createElement('div');
+                item.className = "result-item";
+                item.innerHTML = `<span><b>${d.placa}</b> - ${d.nombre}</span> <small style="color:${d.tipo === 'COTIZACION' ? 'var(--gold)' : 'red'}">${d.tipo}</small>`;
+                item.onclick = () => ver(d);
+                res.appendChild(item);
+            }
+        });
+    };
+
+    function ver(s) {
+        const colorH = s.tipo === 'COTIZACION' ? 'var(--gold)' : 'var(--toyota-red)';
+        const filasServ = (s.servicios || []).map(i => `<tr><td>${i.nombre}</td><td align="right">$${i.precio.toFixed(2)}</td></tr>`).join('');
+        const filasRep = (s.repuestos || []).map(i => `<tr><td style="color:#555;"><i>(Rep) ${i.nombre} - x${i.cantidad}</i></td><td align="right">$${i.precio.toFixed(2)}</td></tr>`).join('');
+        const fEntrada = s.entrada ? s.entrada.replace("T", " ") : "-";
+
+        document.getElementById('visor').innerHTML = `
+            <div style="padding:40px; border:2px solid #333; background:white;">
+                <div style="text-align:center; border-bottom:4px solid ${colorH}; margin-bottom:20px;">
+                    <h1 style="color:var(--toyota-red); margin:0;">TOYOSERVICORO</h1>
+                    <div style="background:#000; color:#fff; display:inline-block; padding:2px 20px; border-radius:10px; margin-bottom:10px;">${s.tipo}</div>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; background:#f4f4f4; padding:15px; border-radius:8px; font-size:0.85em;">
+                    <div><b>CLIENTE:</b> ${s.nombre}<br><b>PLACA:</b> ${s.placa}<br><b>MODELO:</b> ${s.modelo}</div>
+                    <div style="text-align:right;"><b>FECHA:</b> ${s.fecha}<br><b>KM ACTUAL:</b> ${s.km}<br><b>ENTRADA:</b> ${fEntrada}</div>
+                </div>
+                
+                <div style="margin-top:15px; display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; font-size:0.8em;">
+                    <div style="border:1px solid #ddd; padding:8px;"><b>MOTIVO DE INGRESO:</b><br>${s.falla || '-'}</div>
+                    <div style="border:1px solid #ddd; padding:8px;"><b>DIAGNÓSTICO TÉCNICO:</b><br>${s.diagnostico || '-'}</div>
+                    <div style="border:1px solid #ddd; padding:8px; background:#fff9c4;"><b>TRABAJO REALIZADO:</b><br>${s.trabajo || '-'}</div>
+                </div>
+
+                <table style="width:100%; border-collapse:collapse; margin-top:15px; font-size:0.9em;">
+                    <thead style="background:var(--dark); color:white;"><tr><th align="left">CONCEPTO / REPUESTOS</th><th align="right">SUBTOTAL</th></tr></thead>
+                    <tbody>
+                        ${filasServ} ${filasRep}
+                        <tr><td style="border-top:1px solid #999;"><b>MANO DE OBRA PROFESIONAL</b></td><td align="right" style="border-top:1px solid #999;">$${(s.manoObra || 0).toFixed(2)}</td></tr>
+                    </tbody>
+                    <tfoot><tr style="font-size:1.3em; color:${colorH}; border-top:3px solid #333;"><td><b>TOTAL GENERAL</b></td><td align="right"><b>$${s.total.toFixed(2)}</b></td></tr></tfoot>
+                </table>
+                
+                <div style="margin-top:20px; padding:15px; border:2px dashed var(--toyota-red); text-align:center; color:var(--dark); font-weight:bold; border-radius:10px;">
+                    <span style="color:var(--toyota-red);">⚠️ PRÓXIMO SERVICIO SUGERIDO:</span><br>
+                    FECHA: ${s.prox_fecha || '___'} | KILOMETRAJE: ${s.prox_km || '___'}
+                </div>
+                
+                <button class="btn btn-dark no-print" onclick="window.print()" style="margin-top:20px;">IMPRIMIR COMPROBANTE</button>
+            </div>`;
+    }
+</script>
+</body>
+</html>
