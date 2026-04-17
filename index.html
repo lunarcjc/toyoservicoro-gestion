@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+
+<html lang="es"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TOYOSERVICORO - Gestión Automotriz</title>
+<!-- BEGIN: Styles and Libraries -->
+<!-- Tailwind CSS v3 with Plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Google Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700&amp;display=swap" rel="stylesheet"/>
+<style data-purpose="custom-layout">
+    @media print {
+      body * { visibility: hidden; }
+      #print_content, #print_content * { visibility: visible; }
+      #print_content { position: fixed; left: 0; top: 0; width: 100%; border: none; box-shadow: none; padding: 0; background: white; z-index: 10000; }
+      .no-print { display: none !important; }
+    }
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    [contenteditable]:focus { background-color: #fffbeb; outline: 2px solid #ef4444; border-radius: 2px; }
+    input[type="number"]::-webkit-inner-spin-button, 
+    input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  </style>
+<!-- END: Styles and Libraries -->
+<!-- BEGIN: Logic & Data Store -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, doc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    // MAINTAINED FIREBASE WEB SDK CONFIGURATION
+    const firebaseConfig = {
+      apiKey: "AIzaSyADvF6csMKvuRcfQD3nPfHWb-wc0qGM4fY",
+      authDomain: "toyoservicoro-a1c0b.firebaseapp.com",
+      projectId: "toyoservicoro-a1c0b",
+      storageBucket: "toyoservicoro-a1c0b.firebasestorage.app",
+      messagingSenderId: "200239989692",
+      appId: "1:200239989692:web:490adf8ca4be372930a1b9"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Global State for current entry
+    let spareParts = [];
+
+    /** 
+     * Adds a spare part to the local array and re-renders the list
+     */
+    window.addSparePart = () => {
+      const name = document.getElementById('r_nombre').value;
+      const price = parseFloat(document.getElementById('r_precio').value);
+      if (name && !isNaN(price)) {
+        spareParts.push({ name, price });
+        document.getElementById('r_nombre').value = '';
+        document.getElementById('r_precio').value = '';
+        renderSpareParts();
+      }
+    };
+
+    /** 
+     * Removes a specific spare part from the list
+     */
+    window.removeSparePart = (index) => {
+      spareParts.splice(index, 1);
+      renderSpareParts();
+    };
+
+    /** 
+     * Renders the UI list of spare parts
+     */
+    function renderSpareParts() {
+      const list = document.getElementById('lista_repuestos');
+      if (spareParts.length === 0) {
+        list.innerHTML = '<p class="text-center text-xs text-gray-400 mt-8 italic">No hay repuestos cargados</p>';
+      } else {
+        list.innerHTML = spareParts.map((p, i) => `
+          <div class="flex justify-between items-center bg-gray-50 p-2 rounded mb-1 text-sm border-l-4 border-green-500">
+            <span class="font-medium text-slate-700">${p.name}</span>
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-slate-900">$${p.price.toLocaleString()}</span>
+              <button onclick="removeSparePart(${i})" class="text-red-500 hover:text-red-700 p-1 flex items-center">
+                <span class="material-symbols-outlined text-sm">delete</span>
+              </button>
+            </div>
+          </div>
+        `).join('');
+      }
+      calculateTotal();
+    }
+
+    /** 
+     * Calculates the grand total of the service
+     */
+    window.calculateTotal = () => {
+      const baseMO = parseFloat(document.getElementById('v_mo').value) || 0;
+      const totalSpares = spareParts.reduce((acc, p) => acc + p.price, 0);
+      const total = baseMO + totalSpares;
+      
+      // Update Summary UI
+      const totalDisplays = document.querySelectorAll('.total_display');
+      totalDisplays.forEach(el => el.innerText = `$ ${total.toLocaleString()}`);
+      
+      const spareDisplays = document.querySelectorAll('.total_spares');
+      spareDisplays.forEach(el => el.innerText = `$ ${totalSpares.toLocaleString()}`);
+      
+      const moDisplays = document.querySelectorAll('.summary_mo');
+      moDisplays.forEach(el => el.innerText = `$ ${baseMO.toLocaleString()}`);
+    };
+
+    /** 
+     * Automatic KM prediction (+5000 KM standard service)
+     */
+    window.updateKM = () => {
+      const kmIngreso = parseInt(document.getElementById('c_km_ingreso').value) || 0;
+      if (kmIngreso > 0) {
+        document.getElementById('c_km_proximo').value = kmIngreso + 5000;
+      }
+    };
+
+    /** 
+     * Saves the service record to Firebase Firestore
+     * Optimized for speed and robustness
+     */
+    window.guardarRegistro = async () => {
+      const btn = document.getElementById('btn_guardar');
+      const baseMO = parseFloat(document.getElementById('v_mo').value) || 0;
+      const totalSpares = spareParts.reduce((acc, p) => acc + p.price, 0);
+
+      // Guard if essential data is missing
+      if (!document.getElementById('c_patente').value) {
+        alert("La patente es obligatoria para guardar el registro.");
+        return;
+      }
+
+      // Disable button and show loading state
+      btn.disabled = true;
+      btn.classList.add('opacity-75', 'cursor-not-allowed');
+      const originalText = btn.innerHTML;
+      btn.innerHTML = '<span class="material-symbols-outlined animate-spin">refresh</span> GENERANDO...';
+
+      const data = {
+        cliente: document.getElementById('c_nombre').value || 'S/N',
+        patente: document.getElementById('c_patente').value.toUpperCase() || 'S/P',
+        modelo: document.getElementById('c_modelo').value || 'Genérico',
+        falla: document.getElementById('c_falla').value,
+        diagnostico: document.getElementById('c_diagnostico').value,
+        trabajo: document.getElementById('c_trabajo').value,
+        kmIngreso: document.getElementById('c_km_ingreso').value,
+        kmProximo: document.getElementById('c_km_proximo').value,
+        fechaEntrada: document.getElementById('c_fecha_entrada').value,
+        fechaSalida: document.getElementById('c_fecha_salida').value,
+        fechaProximo: document.getElementById('c_fecha_proximo').value,
+        baseMO: baseMO,
+        descMO: document.getElementById('desc_mo').value || 'Mano de Obra Especializada',
+        repuestos: [...spareParts],
+        fecha: new Date().toISOString(),
+        total: baseMO + totalSpares
+      };
+
+      try {
+        // Add a timeout fallback for the promise to ensure UI doesn't hang
+        const savePromise = addDoc(collection(db, "registros"), data);
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000));
+        
+        const docRef = await Promise.race([savePromise, timeoutPromise]);
+        console.log("Registro guardado con ID:", docRef.id);
+        
+        // Success: Open history automatically
+        await verHistorial(true);
+        
+      } catch (e) {
+        console.error("Error al guardar en Firestore: ", e);
+        if (e.message === 'Timeout') {
+          alert("El servidor está tardando más de lo esperado. Por favor revise el historial en unos momentos.");
+        } else {
+          alert(`ERROR AL GUARDAR: ${e.message}. Verifique su conexión.`);
+        }
+        // Even on error, we might want to check history to see if it actually went through
+        await verHistorial(true);
+      } finally {
+        // ALWAYS restore the button state
+        btn.disabled = false;
+        btn.classList.remove('opacity-75', 'cursor-not-allowed');
+        btn.innerHTML = originalText;
+      }
+    };
+
+    /** 
+     * Fetches and displays recent service history
+     */
+    window.verHistorial = async (forceOpen = false) => {
+      const histDiv = document.getElementById('historial_container');
+      
+      if (forceOpen) {
+        histDiv.classList.remove('hidden');
+      } else {
+        histDiv.classList.toggle('hidden');
+      }
+
+      if (!histDiv.classList.contains('hidden')) {
+        const list = document.getElementById('historial_lista');
+        list.innerHTML = '<div class="p-8 text-center"><span class="material-symbols-outlined animate-spin text-red-600">refresh</span><p class="text-xs mt-2 text-gray-500 uppercase font-black">Cargando historial...</p></div>';
+        
+        try {
+          const q = query(collection(db, "registros"), orderBy("fecha", "desc"), limit(20));
+          const querySnapshot = await getDocs(q);
+          list.innerHTML = '';
+          
+          if (querySnapshot.empty) {
+            list.innerHTML = '<p class="p-8 text-center text-gray-400 text-xs italic font-medium">No hay registros previos.</p>';
+            return;
+          }
+
+          querySnapshot.forEach((docSnap) => {
+            const d = docSnap.data();
+            const date = new Date(d.fecha).toLocaleDateString();
+            list.innerHTML += `
+              <div class="border-b p-3 flex justify-between items-center hover:bg-gray-50 transition">
+                <div>
+                  <p class="font-bold text-gray-800">${d.patente} - ${d.cliente}</p>
+                  <p class="text-xs text-gray-500">${date} | $${d.total.toLocaleString()}</p>
+                </div>
+                <div class="flex gap-2">
+                  <button onclick="verDocumento('${docSnap.id}')" class="bg-red-600 text-white p-2 rounded-full hover:bg-red-700 transition flex items-center" title="Ver/Imprimir">
+                    <span class="material-symbols-outlined text-sm">visibility</span>
+                  </button>
+                  <button onclick="eliminarRegistro('${docSnap.id}')" class="bg-gray-400 text-white p-2 rounded-full hover:bg-gray-500 transition flex items-center" title="Eliminar">
+                    <span class="material-symbols-outlined text-sm">delete</span>
+                  </button>
+                </div>
+              </div>
+            `;
+          });
+        } catch (e) {
+          console.error("Error al cargar historial:", e);
+          list.innerHTML = '<p class="p-8 text-center text-red-500 text-xs font-bold uppercase">Error al cargar historial.</p>';
+        }
+      }
+    };
+
+    /** 
+     * Deletes a record from Firestore
+     */
+    window.eliminarRegistro = async (id) => {
+      if(confirm("¿Estás seguro de eliminar este registro permanentemente?")) {
+        try {
+          await deleteDoc(doc(db, "registros", id));
+          verHistorial(true);
+        } catch (e) {
+          console.error("Error al eliminar:", e);
+          alert("Error al eliminar el registro.");
+        }
+      }
+    };
+
+    /** 
+     * Generates a printable view of the document in a modal
+     */
+    window.verDocumento = async (id) => {
+      const modal = document.getElementById('modal_print');
+      const content = document.getElementById('print_content');
+      
+      try {
+        const docRef = doc(db, "registros", id);
+        const docSnap = await getDoc(docRef);
+        
+        if(!docSnap.exists()) {
+          console.error("El documento no existe.");
+          return;
+        }
+        
+        const docData = docSnap.data();
+
+        let htmlRepuestos = (docData.repuestos || []).map(p => `
+          <tr class="border-b border-gray-100">
+            <td class="py-2 text-left" contenteditable="true">${p.name}</td>
+            <td class="py-2 text-right font-mono" contenteditable="true">$${p.price.toLocaleString()}</td>
+          </tr>
+        `).join('');
+
+        content.innerHTML = `
+          <div class="max-w-3xl mx-auto bg-white p-8 border rounded shadow-lg text-gray-800 relative">
+            <!-- Header -->
+            <div class="flex justify-between items-start border-b-4 border-red-600 pb-6 mb-6">
+              <div>
+                <h1 class="text-4xl font-black uppercase tracking-tighter text-red-600">TOYO<span class="text-black">SERVICORO</span></h1>
+                <p class="text-xs font-bold text-gray-500">ORDEN DE SERVICIO TÉCNICO</p>
+                <p class="text-sm mt-2">N° Registro: <strong>${id.substring(0,8).toUpperCase()}</strong></p>
+              </div>
+              <div class="text-right">
+                <h2 class="font-bold text-lg">Centro de Servicio Integral</h2>
+                <p class="text-xs">Av. Ramón Antonio Medina diagonal a la entrada del fogón de los perzos</p>
+                <p class="text-xs">WhatsApp: +58-4146803934</p>
+                <p class="text-xs font-mono">toyoservicoro.com</p>
+              </div>
+            </div>
+
+            <!-- Customer & Vehicle -->
+            <div class="grid grid-cols-2 gap-6 mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-[9px] font-black text-gray-400 uppercase">Propietario / Cliente</label>
+                  <div class="text-sm font-bold uppercase border-b border-gray-200 pb-1" contenteditable="true">${docData.cliente}</div>
+                </div>
+                <div>
+                  <label class="block text-[9px] font-black text-gray-400 uppercase">Vehículo - Patente</label>
+                  <div class="text-sm font-bold border-b border-gray-200 pb-1" contenteditable="true">${docData.modelo} [ ${docData.patente} ]</div>
+                </div>
+              </div>
+              <div class="space-y-3">
+                <div class="flex gap-4">
+                  <div class="flex-1">
+                    <label class="block text-[9px] font-black text-gray-400 uppercase">Entrada</label>
+                    <div class="text-sm font-bold" contenteditable="true">${docData.fechaEntrada || '-'}</div>
+                  </div>
+                  <div class="flex-1">
+                    <label class="block text-[9px] font-black text-gray-400 uppercase">Salida</label>
+                    <div class="text-sm font-bold" contenteditable="true">${docData.fechaSalida || '-'}</div>
+                  </div>
+                </div>
+                <div class="flex gap-4">
+                  <div class="flex-1">
+                    <label class="block text-[9px] font-black text-gray-400 uppercase">KM Ingreso</label>
+                    <div class="text-sm font-bold" contenteditable="true">${docData.kmIngreso || '0'} KM</div>
+                  </div>
+                  <div class="flex-1">
+                    <label class="block text-[9px] font-black text-red-600 uppercase">Próximo Service</label>
+                    <div class="text-sm font-black text-red-600" contenteditable="true">${docData.kmProximo || '0'} KM (${docData.fechaProximo || '-'})</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Technical Sections -->
+            <div class="mb-8">
+              <div class="mb-6">
+                <h3 class="bg-red-600 text-white px-3 py-1 text-[10px] font-black mb-3 inline-block rounded">I. INFORME TÉCNICO</h3>
+                <div class="space-y-3 text-sm">
+                  <div class="bg-white border p-3 rounded shadow-sm">
+                    <span class="font-black text-[9px] block text-gray-400 uppercase mb-1">Motivo de Ingreso / Falla:</span>
+                    <p contenteditable="true" class="outline-none italic">${docData.falla || 'No especificado'}</p>
+                  </div>
+                  <div class="bg-white border p-3 rounded shadow-sm">
+                    <span class="font-black text-[9px] block text-gray-400 uppercase mb-1">Tareas Realizadas:</span>
+                    <p contenteditable="true" class="outline-none">${docData.trabajo || 'Mantenimiento preventivo'}</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Financial Section -->
+              <div>
+                <h3 class="bg-slate-900 text-white px-3 py-1 text-[10px] font-black mb-3 inline-block rounded">II. LIQUIDACIÓN DE SERVICIOS</h3>
+                <table class="w-full text-sm">
+                  <thead class="border-b-2 border-slate-900">
+                    <tr>
+                      <th class="text-left py-2 font-black uppercase text-[10px]">Descripción del Concepto</th>
+                      <th class="text-right py-2 w-32 font-black uppercase text-[10px]">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="border-b border-gray-100">
+                      <td class="py-2 text-left font-semibold" contenteditable="true">${docData.descMO || 'Mano de Obra Especializada'}</td>
+                      <td class="py-2 text-right font-mono" contenteditable="true">$${(docData.baseMO || 0).toLocaleString()}</td>
+                    </tr>
+                    ${htmlRepuestos}
+                  </tbody>
+                  <tfoot>
+                    <tr class="bg-gray-50">
+                      <td class="py-4 px-2 text-left font-black text-lg uppercase">Total a Abonar</td>
+                      <td class="py-4 px-2 text-right font-black text-2xl text-red-600">$${(docData.total || 0).toLocaleString()}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <!-- Signatures -->
+            <div class="mt-16 flex justify-between gap-12">
+              <div class="flex-1 text-center border-t border-gray-400 pt-2">
+                <p class="text-[9px] font-black text-gray-400 uppercase">Sello y Firma TOYOSERVICORO</p>
+              </div>
+              <div class="flex-1 text-center border-t border-gray-400 pt-2">
+                <p class="text-[9px] font-black text-gray-400 uppercase">Firma Conforme de Cliente</p>
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="mt-8 pt-4 border-t border-dotted border-gray-300 text-center">
+              <p class="text-[8px] text-gray-400 italic font-medium">Gracias por confiar su vehículo a Toyoservicoro. Este documento no es una factura legal.</p>
+            </div>
+          </div>
+        `;
+
+        // Ensure modal visibility
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+      } catch (err) {
+        console.error("Error al obtener documento:", err);
+        alert("Error al cargar los datos del documento.");
+      }
+    };
+
+    window.closeModal = () => {
+      const modal = document.getElementById('modal_print');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    };
+
+    window.imprimirContenido = () => {
+      window.print();
+    };
+
+    // Event initialization
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('v_mo').addEventListener('input', calculateTotal);
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('c_fecha_entrada').value = today;
+      console.log("Sistema ToyoServicoro v2.3 Iniciado - Optimized Flow");
+    });
+  </script>
+<!-- END: Logic & Data Store -->
+</head>
+<body class="bg-[#f4f4f7] min-h-screen font-sans text-slate-900">
+<!-- BEGIN: MainHeader -->
+<nav class="bg-red-600 text-white p-4 shadow-xl sticky top-0 z-40 border-b-4 border-black">
+<div class="max-w-7xl mx-auto flex justify-between items-center">
+<div class="flex items-center gap-3">
+<div class="bg-white p-1 rounded shadow-sm">
+<span class="material-symbols-outlined text-red-600 text-3xl">build_circle</span>
+</div>
+<h1 class="text-2xl font-black tracking-tighter uppercase italic">TOYO<span class="text-black">SERVICORO</span></h1>
+</div>
+<div class="flex gap-4">
+<button class="flex items-center gap-2 bg-black/20 hover:bg-black/40 px-4 py-2 rounded-lg transition font-bold text-sm uppercase tracking-wider" onclick="verHistorial()">
+<span class="material-symbols-outlined text-lg">history</span>
+<span>Historial</span>
+</button>
+</div>
+</div>
+</nav>
+<!-- END: MainHeader -->
+<!-- BEGIN: MainContent -->
+<main class="max-w-4xl mx-auto p-4 sm:p-8 space-y-8 pb-32">
+<!-- Section: Basic Info -->
+<section class="bg-white rounded-2xl shadow-sm overflow-hidden border border-gray-200">
+<div class="bg-slate-900 px-6 py-3 flex items-center gap-2">
+<span class="material-symbols-outlined text-red-500">assignment_ind</span>
+<h2 class="text-xs font-black uppercase text-white tracking-widest">Información del Ingreso</h2>
+</div>
+<div class="p-6 space-y-6">
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<div data-purpose="input-group">
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Nombre del Cliente</label>
+<input class="w-full border-gray-200 rounded-xl text-sm focus:ring-red-500 focus:border-red-500 font-semibold" id="c_nombre" placeholder="Juan Pérez" type="text"/>
+</div>
+<div data-purpose="input-group">
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Patente / Matrícula</label>
+<input class="w-full border-gray-200 rounded-xl text-sm uppercase focus:ring-red-500 focus:border-red-500 font-black tracking-widest" id="c_patente" placeholder="ABC 123" type="text"/>
+</div>
+<div data-purpose="input-group">
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Modelo / Año</label>
+<input class="w-full border-gray-200 rounded-xl text-sm focus:ring-red-500 focus:border-red-500 font-semibold" id="c_modelo" placeholder="Toyota Hilux 2023" type="text"/>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+<div class="grid grid-cols-2 gap-4">
+<div>
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">KM Ingreso</label>
+<input class="w-full border-gray-200 rounded-lg text-sm font-bold text-red-600" id="c_km_ingreso" oninput="updateKM()" placeholder="0" type="number"/>
+</div>
+<div>
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">KM Próximo Service</label>
+<input class="w-full bg-red-50 border-red-200 rounded-lg text-sm font-black text-red-700" id="c_km_proximo" placeholder="+5000" type="number"/>
+</div>
+</div>
+<div class="grid grid-cols-3 gap-3">
+<div>
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Fecha Entrada</label>
+<input class="w-full border-gray-200 rounded-lg text-xs" id="c_fecha_entrada" type="date"/>
+</div>
+<div>
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Fecha Salida</label>
+<input class="w-full border-gray-200 rounded-lg text-xs" id="c_fecha_salida" type="date"/>
+</div>
+<div>
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Próximo Service</label>
+<input class="w-full border-gray-200 rounded-lg text-xs" id="c_fecha_proximo" type="date"/>
+</div>
+</div>
+</div>
+<div data-purpose="input-group">
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Falla Reportada o Motivo de Ingreso</label>
+<textarea class="w-full border-gray-200 rounded-xl text-sm focus:ring-red-500 focus:border-red-500 italic" id="c_falla" placeholder="Describa el problema..." rows="2"></textarea>
+</div>
+</div>
+</section>
+<!-- Section: Technical Diagnosis -->
+<section class="bg-white rounded-2xl shadow-sm overflow-hidden border border-gray-200">
+<div class="bg-red-600 px-6 py-3 flex items-center gap-2">
+<span class="material-symbols-outlined text-white">build</span>
+<h2 class="text-xs font-black uppercase text-white tracking-widest">Diagnóstico y Trabajo Realizado</h2>
+</div>
+<div class="p-6 space-y-4">
+<div data-purpose="input-group">
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Diagnóstico del Técnico</label>
+<textarea class="w-full border-gray-200 rounded-xl text-sm focus:ring-red-500 focus:border-red-500 font-medium" id="c_diagnostico" placeholder="¿Qué detectó el especialista?" rows="2"></textarea>
+</div>
+<div data-purpose="input-group">
+<label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Detalle de Trabajo Realizado</label>
+<textarea class="w-full border-gray-200 rounded-xl text-sm focus:ring-red-500 focus:border-red-500 font-medium" id="c_trabajo" placeholder="Enumere las tareas efectuadas..." rows="4"></textarea>
+</div>
+</div>
+</section>
+<!-- Finance Sections -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+<!-- Labor Cost -->
+<section class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden h-fit">
+<div class="bg-slate-100 px-6 py-3 border-b border-gray-200">
+<h2 class="text-[10px] font-black uppercase text-gray-500 tracking-wider flex items-center gap-2">
+<span class="material-symbols-outlined text-lg text-red-600">engineering</span> Mano de Obra
+            </h2>
+</div>
+<div class="p-4 space-y-4">
+<div class="bg-gray-50 p-4 rounded-xl space-y-3">
+<div>
+<label class="block text-[9px] font-black text-gray-400 uppercase mb-1">Descripción del Servicio</label>
+<input class="w-full border-gray-200 rounded-lg text-sm font-medium bg-white focus:ring-red-500 focus:border-red-500" id="desc_mo" placeholder="Mano de Obra Especializada" type="text"/>
+</div>
+<div>
+<label class="block text-[9px] font-black text-gray-400 uppercase mb-1">Costo Laboral ($)</label>
+<input class="w-full border-gray-200 rounded-lg text-right font-black text-sm text-red-600 bg-white focus:ring-red-500 focus:border-red-500" id="v_mo" placeholder="0" type="number" value="0"/>
+</div>
+</div>
+</div>
+</section>
+<!-- Spare Parts -->
+<section class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+<div class="bg-slate-100 px-6 py-3 border-b border-gray-200">
+<h2 class="text-[10px] font-black uppercase text-gray-500 tracking-wider flex items-center gap-2">
+<span class="material-symbols-outlined text-lg text-green-600">inventory_2</span> Repuestos e Insumos
+            </h2>
+</div>
+<div class="p-4">
+<div class="flex gap-2 mb-4 bg-gray-50 p-2 rounded-xl">
+<input class="flex-1 border-none bg-transparent text-sm focus:ring-0 font-medium" id="r_nombre" placeholder="Nombre del Repuesto" type="text"/>
+<input class="w-24 border-none bg-transparent text-right font-black text-sm text-green-700 focus:ring-0" id="r_precio" placeholder="$" type="number"/>
+<button class="bg-slate-900 text-white p-2 rounded-lg hover:bg-red-600 transition flex items-center" onclick="addSparePart()">
+<span class="material-symbols-outlined">add</span>
+</button>
+</div>
+<div class="min-h-[140px] max-h-60 overflow-y-auto custom-scrollbar" id="lista_repuestos">
+<p class="text-center text-xs text-gray-400 mt-8 italic">No hay repuestos cargados</p>
+</div>
+</div>
+</section>
+</div>
+<!-- Simplified Finalize Order Section -->
+<section class="bg-slate-900 text-white rounded-3xl shadow-xl overflow-hidden mt-12 border-b-8 border-red-600">
+<div class="p-8">
+<div class="flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="w-full md:w-1/2 space-y-4">
+<h2 class="text-[11px] font-black uppercase text-red-500 tracking-[0.2em]">Resumen de Liquidación</h2>
+<div class="space-y-3">
+<div class="flex justify-between items-center border-b border-white/10 pb-2">
+<span class="text-sm font-medium text-slate-400">Mano de Obra</span>
+<span class="font-bold text-slate-200 summary_mo">$ 0</span>
+</div>
+<div class="flex justify-between items-center border-b border-white/10 pb-2">
+<span class="text-sm font-medium text-slate-400">Total Repuestos</span>
+<span class="font-bold text-slate-200 total_spares">$ 0</span>
+</div>
+<div class="flex justify-between items-center pt-2">
+<span class="text-base font-black text-white uppercase tracking-wider">Total Final</span>
+<span class="text-4xl font-black text-red-500 total_display">$ 0</span>
+</div>
+</div>
+</div>
+<div class="w-full md:w-auto">
+<button class="w-full md:px-12 bg-red-600 hover:bg-red-500 text-white font-black py-5 rounded-2xl flex items-center justify-center gap-3 transition-all transform active:scale-95 shadow-xl shadow-red-600/20" id="btn_guardar" onclick="guardarRegistro()">
+<span class="material-symbols-outlined">save</span>
+<span>GENERAR ORDEN</span>
+</button>
+</div>
+</div>
+<p class="text-center text-[9px] text-slate-500 mt-8 font-black uppercase tracking-[0.3em]">
+          TOYOSERVICORO v2.3 MANAGEMENT SYSTEM
+        </p>
+</div>
+</section>
+<!-- History Widget (Floating) -->
+<div class="hidden fixed bottom-6 right-6 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden transition-all z-40" id="historial_container">
+<div class="bg-red-600 p-4 flex justify-between items-center">
+<h3 class="font-black text-xs text-white uppercase tracking-widest">Historial Reciente</h3>
+<button class="text-white/80 hover:text-white flex items-center" onclick="verHistorial()">
+<span class="material-symbols-outlined text-sm">close</span>
+</button>
+</div>
+<div class="max-h-[400px] overflow-y-auto custom-scrollbar" id="historial_lista"></div>
+</div>
+</main>
+<!-- END: MainContent -->
+<!-- BEGIN: PrintModal -->
+<div class="fixed inset-0 bg-black/75 z-[9999] flex items-center justify-center p-4 hidden" id="modal_print">
+<div class="bg-slate-100 rounded-3xl w-full max-w-5xl h-[95vh] flex flex-col overflow-hidden shadow-2xl relative">
+<!-- Toolbar -->
+<div class="p-4 bg-white border-b flex justify-between items-center no-print">
+<div class="flex items-center gap-4">
+<div class="bg-red-600 text-white p-2 rounded-lg">
+<span class="material-symbols-outlined">visibility</span>
+</div>
+<div>
+<h3 class="font-black text-slate-900">Vista Previa de Orden</h3>
+<p class="text-[10px] text-gray-500 uppercase font-bold">Edite el contenido antes de imprimir</p>
+</div>
+</div>
+<div class="flex gap-3">
+<button class="bg-red-600 text-white px-6 py-2.5 rounded-xl flex items-center gap-2 hover:bg-red-700 transition font-black text-sm shadow-lg shadow-red-600/20" onclick="imprimirContenido()">
+<span class="material-symbols-outlined text-lg">print</span> IMPRIMIR / PDF
+          </button>
+<button class="bg-slate-200 text-slate-700 px-6 py-2.5 rounded-xl hover:bg-slate-300 transition font-black text-sm" onclick="closeModal()">
+            CERRAR
+          </button>
+</div>
+</div>
+<!-- Scrollable Preview -->
+<div class="flex-1 overflow-y-auto p-4 sm:p-12 bg-[#e2e8f0] custom-scrollbar">
+<div class="bg-white rounded shadow-2xl" id="print_content"></div>
+</div>
+</div>
+</div>
+<!-- END: PrintModal -->
+</body></html>
